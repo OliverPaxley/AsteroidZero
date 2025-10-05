@@ -35,9 +35,15 @@ const Hero = () => {
             <button className='cta-button'>
               Explore Threats
             </button>
-            <button className='cta-button' id='generateGamePage'>
+            <a
+              className='cta-button'
+              id='generateGamePage'
+              href='/game/game/game.html'
+              target='_blank'
+              rel='noopener noreferrer'
+            >
               Game & Simulation
-            </button>
+            </a>
           </div>
         </div>
         
