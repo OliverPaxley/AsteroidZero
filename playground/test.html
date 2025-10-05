@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>NASA Map Playground</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; }
+    header { padding: 10px 14px; border-bottom: 1px solid #eee; }
+    #map { height: calc(100vh - 56px); width: 100vw; }
+    .badge { font-size: 12px; opacity: 0.7; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>NASA Map Playground</strong>
+    <span class="badge">Click map to drop estimated impact radius for the first NEO</span>
+  </header>
+  <div id="map"></div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+  <script>
+    // --- CONFIG: put your NASA key here for testing only ---
+    const NASA_KEY = 'DEMO_KEY'; // replace with your key for reliable results
+
+    // --- Helpers ---
+    const J_PER_MT = 4.184e15;
+    function energyMegatons(diameter_m, relVel_kms, density = 3000) {
+      const r = diameter_m / 2;
+      const volume = (4/3) * Math.PI * r**3; // m^3
+      const mass = density * volume;         // kg
+      const v = relVel_kms * 1000;           // m/s
+      const joules = 0.5 * mass * v * v;
+      return joules / J_PER_MT;              // Mt TNT
+    }
+    function radiusKmFromEnergyMt(E_mt, k = 0.012) {
+      return k * Math.cbrt(E_mt);
+    }
+    function fmt(d) { return d.toISOString().split('T')[0]; }
+
+    async function fetchNeoFeed(days = 1) {
+      const start = new Date();
+      const end = new Date(); end.setDate(end.getDate() + days);
+      const url = `https://api.nasa.gov/neo/rest/v1/feed?start_date=${fmt(start)}&end_date=${fmt(end)}&api_key=${NASA_KEY}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('NeoWs ' + res.status);
+      const data = await res.json();
+      const arr = Object.values(data.near_earth_objects).flat().map(a => {
+        const d = a.estimated_diameter.meters;
+        const relVel_kms = parseFloat(a?.close_approach_data?.[0]?.relative_velocity?.kilometers_per_second ?? '0');
+        return {
+          id: a.id,
+          name: a.name,
+          diameter_m: (d.estimated_diameter_min + d.estimated_diameter_max) / 2,
+          relVel_kms
+        };
+      }).filter(x => x.relVel_kms > 0);
+      return arr;
+    }
+
+    // --- Map setup ---
+    const map = L.map('map', { center: [20, 0], zoom: 2, worldCopyJump: true });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    let active = null;
+
+    (async () => {
+      try {
+        const data = await fetchNeoFeed(1);
+        if (!data.length) { alert('No NEOs loaded—check your API key'); return; }
+        const first = data[0];
+        const E_mt = energyMegatons(first.diameter_m, first.relVel_kms, 3000);
+        const radius_km = radiusKmFromEnergyMt(E_mt, 0.012);
+        active = { ...first, E_mt, radius_km };
+        console.log('Active NEO:', active);
+      } catch (e) {
+        console.error(e);
+        alert('Failed to load NEOs: ' + e.message);
+      }
+    })();
+
+    map.on('click', (e) => {
+      if (!active) return;
+      const pt = turf.point([e.latlng.lng, e.latlng.lat]);
+      const circle = turf.circle(pt, active.radius_km, { steps: 128, units: 'kilometers' });
+
+      L.geoJSON(circle, {
+        style: { weight: 1, fillOpacity: 0.1 }
+      }).addTo(map).bindPopup(
+        `${active.name}<br/>~${Math.round(active.diameter_m)} m • ${active.relVel_kms.toFixed(2)} km/s<br/>Radius ≈ ${active.radius_km.toFixed(2)} km`
+      ).openPopup();
+    });
+  </script>
+</body>
+</html>
