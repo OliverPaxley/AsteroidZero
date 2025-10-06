@@ -5,6 +5,7 @@ import Navbar from './components/Navbar'
 import FrameOne from './components/FrameOne' 
 import Hero from './components/Hero'
 import Mission from './components/Mission'
+import Footer from './components/Footer.jsx';
 
 const App = () => {
   return (
@@ -12,8 +13,9 @@ const App = () => {
       <Navbar />
       <Hero />
       <FrameOne />
-      <ImpactMapPage />
       <Mission />
+      <ImpactMapPage />
+      <Footer />
     </main>
   )
 }

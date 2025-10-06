@@ -24,11 +24,12 @@ const FrameOne = () => {
   const observerRef = useRef(null);
   const [_details, setDetails] = useState(null);
   const [closeApproachTime, setCloseApproachTime] = useState(null);
+  
+  // Cache for asteroid details to prevent duplicate requests
+  const detailsCache = useRef(new Map());
+  const ongoingRequests = useRef(new Map());
 
-  // Ref for the Three.js canvas and controls
-  const viewerRef = useRef(null);
-  const viewerMountRef = useRef(null);
-  const controlsRef = useRef(null); // New ref to store controls
+
 
   useEffect(() => {
     let mounted = true;
@@ -147,7 +148,30 @@ const FrameOne = () => {
 
     (async () => {
       try {
-        const d = asteroid.details || (asteroid.id ? await fetchNeoDetails(asteroid.id) : null);
+        let d = asteroid.details;
+        
+        // If no details in asteroid object, try to fetch them with caching
+        if (!d && asteroid.id) {
+          // Check cache first
+          if (detailsCache.current.has(asteroid.id)) {
+            d = detailsCache.current.get(asteroid.id);
+          } else if (ongoingRequests.current.has(asteroid.id)) {
+            // Wait for ongoing request
+            d = await ongoingRequests.current.get(asteroid.id);
+          } else {
+            // Start new request
+            const requestPromise = fetchNeoDetails(asteroid.id);
+            ongoingRequests.current.set(asteroid.id, requestPromise);
+            
+            try {
+              d = await requestPromise;
+              detailsCache.current.set(asteroid.id, d);
+            } finally {
+              ongoingRequests.current.delete(asteroid.id);
+            }
+          }
+        }
+        
         if (!mounted) return;
         setDetails(d);
 
@@ -174,119 +198,7 @@ const FrameOne = () => {
     return () => { mounted = false; };
   }, [asteroid]);
 
-  // Dynamic Three.js Setup for Interactive Space Viewer
-  useEffect(() => {
-    let mounted = true;
-    let scene, camera, renderer, asteroidsGroup, starsGroup;
-    let animationId;
 
-    const initViewer = async () => {
-      if (!viewerMountRef.current || !mounted) return;
-
-      // Dynamically import Three.js and OrbitControls
-      const { default: THREE } = await import('https://unpkg.com/three@0.128.0/build/three.module.js');
-      const { OrbitControls } = await import('https://unpkg.com/three@0.128.0/examples/jsm/controls/OrbitControls.js');
-
-      // Scene
-      scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x000011);
-
-      // Camera
-      camera = new THREE.PerspectiveCamera(75, viewerMountRef.current.clientWidth / viewerMountRef.current.clientHeight, 0.1, 1000);
-      camera.position.set(0, 50, 100);
-
-      // Renderer
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-      renderer.setSize(viewerMountRef.current.clientWidth, viewerMountRef.current.clientHeight);
-      renderer.shadowMap.enabled = true;
-      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-      viewerMountRef.current.innerHTML = '';
-      viewerMountRef.current.appendChild(renderer.domElement);
-
-      // Controls
-      const controls = new OrbitControls(camera, renderer.domElement);
-      controls.enablePan = true;
-      controls.enableZoom = true;
-      controls.enableDamping = true;
-      controls.dampingFactor = 0.05;
-      controlsRef.current = controls; // Store controls in ref
-
-      // Lighting
-      const ambientLight = new THREE.AmbientLight(0x404040, 0.4);
-      scene.add(ambientLight);
-      const pointLight = new THREE.PointLight(0xffffff, 1, 1000);
-      pointLight.position.set(0, 0, 0);
-      scene.add(pointLight);
-
-      // Stars Background
-      starsGroup = new THREE.Group();
-      for (let i = 0; i < 1000; i++) {
-        const starGeometry = new THREE.SphereGeometry(0.1, 4, 4);
-        const starMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
-        const star = new THREE.Mesh(starGeometry, starMaterial);
-        star.position.set(
-          (Math.random() - 0.5) * 2000,
-          (Math.random() - 0.5) * 2000,
-          (Math.random() - 0.5) * 2000
-        );
-        starsGroup.add(star);
-      }
-      scene.add(starsGroup);
-
-      // Asteroid Belt
-      asteroidsGroup = new THREE.Group();
-      const asteroidGeometry = new THREE.SphereGeometry(1, 6, 6);
-      for (let i = 0; i < 500; i++) {
-        const asteroidMaterial = new THREE.MeshLambertMaterial({
-          color: new THREE.Color().setHSL(0.1 + Math.random() * 0.1, 0.5, 0.3)
-        });
-        const asteroid = new THREE.Mesh(asteroidGeometry, asteroidMaterial);
-        const radius = 50 + Math.random() * 30;
-        const angle = Math.random() * Math.PI * 2;
-        const height = (Math.random() - 0.5) * 10;
-        asteroid.position.set(
-          Math.cos(angle) * radius,
-          height,
-          Math.sin(angle) * radius
-        );
-        asteroid.scale.setScalar(0.5 + Math.random() * 2);
-        asteroidsGroup.add(asteroid);
-      }
-      scene.add(asteroidsGroup);
-
-      // Animate
-      const animate = () => {
-        if (!mounted) return;
-        animationId = requestAnimationFrame(animate);
-        asteroidsGroup.rotation.y += 0.001;
-        controls.update();
-        renderer.render(scene, camera);
-      };
-      animate();
-
-      // Resize handler
-      const handleResize = () => {
-        if (!mounted || !viewerMountRef.current) return;
-        camera.aspect = viewerMountRef.current.clientWidth / viewerMountRef.current.clientHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(viewerMountRef.current.clientWidth, viewerMountRef.current.clientHeight);
-      };
-      window.addEventListener('resize', handleResize);
-
-      return () => {
-        window.removeEventListener('resize', handleResize);
-        if (animationId) cancelAnimationFrame(animationId);
-        if (renderer) renderer.dispose();
-      };
-    };
-
-    initViewer().catch(console.error);
-
-    return () => {
-      mounted = false;
-      if (viewerMountRef.current) viewerMountRef.current.innerHTML = '';
-    };
-  }, []);
 
   const assessRisk = (ast) => {
     const mag = ast.absolute_magnitude_h || 22;
@@ -296,9 +208,7 @@ const FrameOne = () => {
     alert(`Hazard Level: ${hazard}\nSize: ${size.toFixed(2)}m\nMiss Distance: ${missDist.toLocaleString()}km`);
   };
 
-  const launchSimulator = () => {
-    alert('Launching Solar System Simulator - Full screen view coming soon!');
-  };
+
 
   const calculateValue = (ast) => {
     const iron = 0.3;
@@ -310,70 +220,53 @@ const FrameOne = () => {
   };
 
   return (
-    <div className="sectionContainer" id="frameOne">
+    <div className="sectionContainer" id="discover">
       <div className="fade-in-text" ref={containerRef}>
         {error && <div className="error-message" role="alert">Error: {error}</div>}
-
-        
-
         <h3>Discover</h3>
-
         <section className="discover-showcase" aria-labelledby="discover-heading">
-          <div className="discover-grid">
-            <article className="discover-card" tabIndex={0}>
-              <figure className="card-visual" aria-hidden="true">
-                {loading && <div className="placeholder">Loading…</div>}
+          <div className="discover-grid" style={{gridTemplateColumns: '1fr 1fr', gap: '3rem', maxWidth: '1200px', margin: '0 auto' }}>
+            <article className="discover-card" tabIndex={0} style={{ padding: '2rem', minHeight: '400px' }}>
+              <figure className="card-visual" aria-hidden="true" style={{ height: '200px', marginBottom: '1.5rem' }}>
+                {loading && <div className="placeholder" style={{ fontSize: '1.2rem' }}>Loading…</div>}
                 {!loading && asteroid && (
                   <svg width="100%" height="100%" viewBox="0 0 480 320" xmlns="http://www.w3.org/2000/svg">
                     <rect width="100%" height="100%" fill="#23243a"/>
-                    <circle cx="240" cy="160" r="80" fill="#ff4444" opacity="0.5"/>
-                    <text x="50%" y="50%" fill="#3a7bff" fontFamily="Arial" fontSize="20" textAnchor="middle" dy=".3em">Threat Analyzer</text>
+                    <circle cx="240" cy="160" r="100" fill="#ff4444" opacity="0.5"/>
+                    <text x="50%" y="50%" fill="#3a7bff" fontFamily="Arial" fontSize="24" textAnchor="middle" dy=".3em">Threat Analyzer</text>
                   </svg>
                 )}
-                {!loading && !asteroid && <div className="placeholder">No data</div>}
+                {!loading && !asteroid && <div className="placeholder" style={{ fontSize: '1.2rem' }}>No data</div>}
               </figure>
-              <h4 className="card-title">{asteroid ? asteroid.name : 'Unknown Object'}</h4>
-              <p className="card-desc">
+              <h4 className="card-title" style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>{asteroid ? asteroid.name : 'Unknown Object'}</h4>
+              <p className="card-desc" style={{ fontSize: '1rem', marginBottom: '1rem' }}>
                 {asteroid
                   ? `Diameter ≈ ${asteroid.diameter_m ? Math.round(asteroid.diameter_m) + ' m' : 'N/A'} • ${asteroid.relVel_kms ? Number(asteroid.relVel_kms).toFixed(2) + ' km/s' : 'N/A'}`
                   : 'No asteroid data available at the moment.'}
               </p>
               {closeApproachTime ? (
-                <p className="card-desc">Next close approach: {closeApproachTime}</p>
+                <p className="card-desc" style={{ fontSize: '0.95rem', marginBottom: '1rem' }}>Next close approach: {closeApproachTime}</p>
               ) : (
-                <p className="card-desc">No upcoming approach data available</p>
+                <p className="card-desc" style={{ fontSize: '0.95rem', marginBottom: '1rem' }}>No upcoming approach data available</p>
               )}
-              <div className="card-actions">
-                <button className="btn" onClick={() => asteroid && assessRisk(asteroid)} disabled={loading || !asteroid}>Assess Risk</button>
-                <button className="btn" onClick={switchAsteroid} disabled={loading || !asteroid || asteroids.length <= 1}>Next</button>
+              <div className="card-actions" style={{ display: 'flex', gap: '1rem', marginTop: 'auto' }}>
+                <button className="btn" style={{ padding: '0.75rem 1.5rem' }} onClick={() => asteroid && assessRisk(asteroid)} disabled={loading || !asteroid}>Assess Risk</button>
+                <button className="btn" style={{ padding: '0.75rem 1.5rem' }} onClick={switchAsteroid} disabled={loading || !asteroid || asteroids.length <= 1}>Next</button>
               </div>
             </article>
 
-            {/* Interactive Space Viewer Card */}
-            <article className="discover-card" tabIndex={0} ref={viewerRef}>
-              <figure className="card-visual">
-                <div ref={viewerMountRef} style={{ width: '100%', height: '100%', borderRadius: 'inherit' }} />
-              </figure>
-              <h4 className="card-title">Interactive Space Viewer</h4>
-              <p className="card-desc">Pan, zoom, and inspect the asteroid belt with smooth controls and real-time rendering. Perfect for visual analysis and presentations.</p>
-              <div className="card-actions">
-                <button className="btn" onClick={() => { controlsRef.current?.reset(); }}>Reset View</button>
-                <button className="btn" onClick={launchSimulator}>Launch Simulator</button>
-              </div>
-            </article>
-
-            <article className="discover-card" tabIndex={0}>
-              <figure className="card-visual">
+            <article className="discover-card" tabIndex={0} style={{ padding: '2rem', minHeight: '400px' }}>
+              <figure className="card-visual" style={{ height: '200px', marginBottom: '1.5rem' }}>
                 <svg width="100%" height="100%" viewBox="0 0 480 320" xmlns="http://www.w3.org/2000/svg">
                   <rect width="100%" height="100%" fill="#23243a"/>
-                  <rect x="200" y="120" width="80" height="80" fill="#6bc9ff" opacity="0.5"/>
-                  <text x="50%" y="50%" fill="#b2b6c8" fontFamily="Arial" fontSize="20" textAnchor="middle" dy=".3em">Mining Prospects</text>
+                  <rect x="180" y="100" width="120" height="120" fill="#6bc9ff" opacity="0.5"/>
+                  <text x="50%" y="50%" fill="#b2b6c8" fontFamily="Arial" fontSize="24" textAnchor="middle" dy=".3em">Mining Prospects</text>
                 </svg>
               </figure>
-              <h4 className="card-title">Asteroid Mining Prospects</h4>
-              <p className="card-desc">Explore valuable asteroids ripe for mining. Discover resources that could fuel future space economies, with insights from real missions.</p>
-              <div className="card-actions">
-                <button className="btn" onClick={() => asteroid && calculateValue(asteroid)} disabled={loading || !asteroid}>Calculate Value</button>
+              <h4 className="card-title" style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Asteroid Mining Prospects</h4>
+              <p className="card-desc" style={{ fontSize: '1rem', marginBottom: '1rem' }}>Explore valuable asteroids ripe for mining. Discover resources that could fuel future space economies, with insights from real missions.</p>
+              <div className="card-actions" style={{ marginTop: 'auto' }}>
+                <button className="btn" style={{ padding: '0.75rem 1.5rem' }} onClick={() => asteroid && calculateValue(asteroid)} disabled={loading || !asteroid}>Calculate Value</button>
               </div>
             </article>
           </div>

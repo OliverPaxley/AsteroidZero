@@ -42,7 +42,7 @@ const Navbar = () => {
   return (
     <nav>
       <div className="Heading">
-        <img src="https://upload.wikimedia.org/wikipedia/commons/8/81/DART_Mission_Patch.png" alt="logo" className="logo" />
+        <img src="./public/logo.png" alt="logo" className="logo" />
         
         {/* Hamburger Menu Button */}
         <div 
@@ -57,8 +57,8 @@ const Navbar = () => {
         {/* Navigation Links */}
         <div className={`nav-links ${isMenuOpen ? 'active' : ''}`}>
           <a href="#home" onClick={(e) => handleScroll('home', e)} className="nav-link"> Home </a>
-          <a href="#asteroid" onClick={(e) => handleScroll('asteroid', e)} className="nav-link"> Asteroid </a>
-          <a href="#mission" onClick={(e) => handleScroll('mission', e)} className="nav-link"> Missions </a>
+          <a href="#asteroid" onClick={(e) => handleScroll('discover', e)} className="nav-link"> Discover </a>
+          <a href="#mission" onClick={(e) => handleScroll('asteroid', e)} className="nav-link"> Asteroid </a>
           <a href="#map" onClick={(e) => handleScroll('map', e)} className="nav-link">Map </a>
         </div>
       </div>

@@ -26,15 +26,23 @@ export default function ImpactMapPage() {
   const [asteroids, setAsteroids] = useState([]);
   const [active, setActive] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadingDetails, setLoadingDetails] = useState(new Set());
 
   // map refs
   const mapDivRef = useRef(null);
   const mapRef = useRef(null);
   const impactLayerRef = useRef(null); // our circle layer group
+  
+  // Cache and request management
+  const detailsCache = useRef(new Map());
+  const ongoingRequests = useRef(new Map());
   // 1) Fetch asteroids — keep only objects with explicit or estimated future approaches
   useEffect(() => {
+    let mounted = true;
+    
     (async () => {
       try {
+        if (!mounted) return;
         const raw = await fetchNeoFeed({ days: 1 });
         const now = Date.now()
 
@@ -99,14 +107,24 @@ export default function ImpactMapPage() {
           .sort((a, b) => b.E_mt - a.E_mt)
           .slice(0, 12)
 
-        setAsteroids(upcoming)
-        setActive(null)
+        if (mounted) {
+          setAsteroids(upcoming)
+          setActive(null)
+        }
       } catch (e) {
-        console.error('NeoWs fetch failed:', e)
+        if (mounted) {
+          console.error('NeoWs fetch failed:', e)
+        }
       } finally {
-        setLoading(false)
+        if (mounted) {
+          setLoading(false)
+        }
       }
     })();
+    
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   // 2) Init Leaflet with black page bg but transparent map bg
@@ -119,7 +137,7 @@ export default function ImpactMapPage() {
       minZoom: 2,
       maxZoom: 8,
       worldCopyJump: true,
-      zoomControl: true,
+      zoomControl: false,
     });
 
     // Base tiles (stable)
@@ -260,29 +278,85 @@ export default function ImpactMapPage() {
               return (
                 <button
                   key={a.id}
+                  disabled={loadingDetails.has(a.id)}
                   onClick={async () => {
-                    // when user selects, fetch details and compute a prototype impact coord
+                    // Prevent multiple clicks
+                    if (loadingDetails.has(a.id)) return;
+                    
+                    // Set active immediately
                     setActive(a);
-                    try {
-                      const details = await fetchNeoDetails(a.id);
-                      // pick the first close approach (best-effort)
-                      const cad = details.close_approach_data?.[0];
+                    
+                    // Check cache first
+                    if (detailsCache.current.has(a.id)) {
+                      const cachedDetails = detailsCache.current.get(a.id);
+                      const cad = cachedDetails.close_approach_data?.[0];
                       if (cad && cad.epoch_date_close_approach) {
                         const epochMs = parseInt(cad.epoch_date_close_approach, 10);
-                        // compute GMST-based approximate longitude (prototype)
                         const jd = epochMs / 86400000 + 2440587.5;
                         const T = (jd - 2451545.0) / 36525;
                         let gmst = 280.46061837 + 360.98564736629 * (jd - 2451545.0) + 0.000387933 * T * T - (T * T * T) / 38710000;
-                        gmst = ((gmst % 360) + 360) % 360; // 0-360
-                        // approximate ground lon as GMST shifted to [-180,180]
+                        gmst = ((gmst % 360) + 360) % 360;
                         const lon = ((gmst + 180) % 360) - 180;
-                        const lat = 0; // prototype: assume equatorial intercept
-                        // prototype coord available in `active` via lat/lng
-                        // update the active object with coordinates so the existing effect draws there
+                        const lat = 0;
+                        setActive(prev => ({ ...prev, lat, lng: lon }));
+                      }
+                      return;
+                    }
+                    
+                    // Check if request is already ongoing
+                    if (ongoingRequests.current.has(a.id)) {
+                      try {
+                        const details = await ongoingRequests.current.get(a.id);
+                        const cad = details.close_approach_data?.[0];
+                        if (cad && cad.epoch_date_close_approach) {
+                          const epochMs = parseInt(cad.epoch_date_close_approach, 10);
+                          const jd = epochMs / 86400000 + 2440587.5;
+                          const T = (jd - 2451545.0) / 36525;
+                          let gmst = 280.46061837 + 360.98564736629 * (jd - 2451545.0) + 0.000387933 * T * T - (T * T * T) / 38710000;
+                          gmst = ((gmst % 360) + 360) % 360;
+                          const lon = ((gmst + 180) % 360) - 180;
+                          const lat = 0;
+                          setActive(prev => ({ ...prev, lat, lng: lon }));
+                        }
+                      } catch (err) {
+                        console.warn('failed to fetch neo details from ongoing request', err);
+                      }
+                      return;
+                    }
+                    
+                    // Start new request
+                    setLoadingDetails(prev => new Set([...prev, a.id]));
+                    
+                    try {
+                      const requestPromise = fetchNeoDetails(a.id);
+                      ongoingRequests.current.set(a.id, requestPromise);
+                      
+                      const details = await requestPromise;
+                      
+                      // Cache the result
+                      detailsCache.current.set(a.id, details);
+                      
+                      // Process coordinates
+                      const cad = details.close_approach_data?.[0];
+                      if (cad && cad.epoch_date_close_approach) {
+                        const epochMs = parseInt(cad.epoch_date_close_approach, 10);
+                        const jd = epochMs / 86400000 + 2440587.5;
+                        const T = (jd - 2451545.0) / 36525;
+                        let gmst = 280.46061837 + 360.98564736629 * (jd - 2451545.0) + 0.000387933 * T * T - (T * T * T) / 38710000;
+                        gmst = ((gmst % 360) + 360) % 360;
+                        const lon = ((gmst + 180) % 360) - 180;
+                        const lat = 0;
                         setActive(prev => ({ ...prev, lat, lng: lon }));
                       }
                     } catch (err) {
                       console.warn('failed to fetch neo details', err);
+                    } finally {
+                      setLoadingDetails(prev => {
+                        const newSet = new Set(prev);
+                        newSet.delete(a.id);
+                        return newSet;
+                      });
+                      ongoingRequests.current.delete(a.id);
                     }
                   }}
                 title="Set active asteroid"
